@@ -21,6 +21,7 @@ import java.io.FileFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URISyntaxException;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -37,9 +38,11 @@ import org.apache.commons.jci.monitor.FilesystemAlterationListener;
 import org.apache.commons.jci.monitor.FilesystemAlterationObserver;
 import org.apache.commons.jci.monitor.FilesystemAlterationObserverImpl;
 import org.apache.jackrabbit.util.Text;
-import org.apache.jackrabbit.vault.fs.api.WorkspaceFilter;
+import org.apache.jackrabbit.vault.fs.Mounter;
+import org.apache.jackrabbit.vault.fs.api.*;
 import org.apache.jackrabbit.vault.fs.config.DefaultWorkspaceFilter;
 import org.apache.jackrabbit.vault.fs.config.ExportRoot;
+import org.apache.jackrabbit.vault.fs.config.MetaInf;
 import org.apache.jackrabbit.vault.util.Constants;
 import org.apache.jackrabbit.vault.util.PathComparator;
 import org.apache.jackrabbit.vault.util.PlatformNameFormat;
@@ -79,6 +82,8 @@ public class SyncHandler implements FilesystemAlterationListener {
     private FStat filterStat;
 
     private FStat configStat;
+
+    private VaultFileSystem fs;
 
 
     // default to exclude all hidden files and directories
@@ -192,6 +197,7 @@ public class SyncHandler implements FilesystemAlterationListener {
     public void sync(Session session) throws RepositoryException, IOException {
         updateConfig();
         updateFilter();
+        updateFileSystem(session);
         if (filter == null) {
             log.info("No filter present or configured in {}. Not syncing.", fileRoot.getAbsolutePath());
             observer.checkAndNotify();
@@ -227,6 +233,18 @@ public class SyncHandler implements FilesystemAlterationListener {
             res.dump();
         }
         log.debug("Sync cycle completed for {}", this);
+    }
+
+    private void updateFileSystem(Session session) throws RepositoryException, IOException {
+        try {
+            MetaInf inf = vltExportRoot == null ? null : vltExportRoot.getMetaInf();
+            VaultFsConfig jcrfsConfig = inf == null ? null : inf.getConfig();
+            WorkspaceFilter wspFilter = inf == null ? null : inf.getFilter();
+            RepositoryAddress mountpoint = new RepositoryAddress(session.getWorkspace().getName());
+            fs = Mounter.mount(jcrfsConfig, wspFilter, mountpoint, null, session);
+        } catch (URISyntaxException e) {
+            throw new RepositoryException(e);
+        }
     }
 
     private void updateConfig() {
@@ -276,16 +294,27 @@ public class SyncHandler implements FilesystemAlterationListener {
             Node parentNode;
             if (session.nodeExists(path)) {
                 node = session.getNode(path);
-                parentNode = node.getParent();
+
+                VaultFile vaultFile;
+                do {
+                    vaultFile = fs.getFile(PlatformNameFormat.getPlatformPath(node.getPath()));
+                    if (vaultFile == null) {
+                        node = node.getParent();
+                    }
+                } while (vaultFile == null && node != null);
+
+                if (vaultFile != null) {
+                    TreeSync tree = createTreeSync(SyncMode.JCR2FS);
+                    res.merge(tree.syncVaultFile(fileRoot, vaultFile));
+                }
             } else {
-                node = null;
                 String parentPath = Text.getRelativeParent(path, 1);
                 parentNode = session.nodeExists(parentPath)
                         ? session.getNode(parentPath)
                         : null;
+                TreeSync tree = createTreeSync(SyncMode.JCR2FS);
+                res.merge(tree.syncSingle(parentNode, null, file, recursive));
             }
-            TreeSync tree = createTreeSync(SyncMode.JCR2FS);
-            res.merge(tree.syncSingle(parentNode, node, file, recursive));
         }
         return res;
     }
