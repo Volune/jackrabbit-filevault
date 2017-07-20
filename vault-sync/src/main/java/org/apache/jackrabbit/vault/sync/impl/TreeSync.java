@@ -34,9 +34,13 @@ import javax.jcr.nodetype.NodeType;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.jackrabbit.util.Text;
+import org.apache.jackrabbit.vault.fs.VaultFileCopy;
 import org.apache.jackrabbit.vault.fs.api.SerializationType;
+import org.apache.jackrabbit.vault.fs.api.VaultFile;
 import org.apache.jackrabbit.vault.fs.api.WorkspaceFilter;
 import org.apache.jackrabbit.vault.util.FileInputSource;
+import org.apache.jackrabbit.vault.util.LineOutputStream;
 import org.apache.jackrabbit.vault.util.MimeTypes;
 import org.apache.jackrabbit.vault.util.PlatformNameFormat;
 import org.slf4j.Logger;
@@ -123,6 +127,21 @@ public class TreeSync {
         e.fStat = getFilterStatus(e.getJcrPath());
         SyncResult res = new SyncResult();
         sync(res, e, recursive);
+        return res;
+    }
+
+    public SyncResult syncVaultFile(File fileRoot, VaultFile vaultFile) throws RepositoryException, IOException {
+        if (syncMode != SyncMode.JCR2FS) {
+            throw new RepositoryException("Not supported");
+        }
+        SyncResult res = new SyncResult();
+        for (VaultFile related : vaultFile.getRelated()) {
+            if (related.isDirectory()) {
+                createDirectory(res, getFileForVaultFile(fileRoot, related), related);
+            } else {
+                writeFile(res, getFileForVaultFile(fileRoot, related), related);
+            }
+        }
         return res;
     }
 
@@ -306,6 +325,15 @@ public class TreeSync {
         }
     }
 
+    private File getFileForVaultFile(File fileRoot, VaultFile vaultFile) {
+        String[] segs = Text.explode(vaultFile.getPath(), '/');
+        File file = fileRoot;
+        for (String seg : segs) {
+            file = new File(file, seg);
+        }
+        return file;
+    }
+
     private void deleteFolder(SyncResult res, Entry e) throws RepositoryException {
         String path = e.node.getPath();
         e.node.remove();
@@ -368,6 +396,17 @@ public class TreeSync {
         res.addEntry(e.getJcrPath(), e.getFsPath(), SyncResult.Operation.UPDATE_FS);
     }
 
+    private void createDirectory(SyncResult res, File file, VaultFile vaultFile) throws RepositoryException {
+        if (file.mkdir()) {
+            String fsPath = file.getAbsolutePath();
+            String jcrPath = vaultFile.getAggregatePath();
+            syncLog.log("A file://%s/", fsPath);
+            res.addEntry(jcrPath, fsPath, SyncResult.Operation.UPDATE_FS);
+        } else if (!file.isDirectory()) {
+            log.error("sync cannot create directory " + file.getAbsolutePath());
+        }
+    }
+
     private void syncFiles(SyncResult res, Entry e) throws RepositoryException, IOException {
         if (syncMode == SyncMode.FS2JCR) {
             writeNtFile(res, e);
@@ -399,6 +438,18 @@ public class TreeSync {
                 bin.dispose();
             }
         }
+    }
+
+    private void writeFile(SyncResult res, File file, VaultFile vaultFile) throws IOException, RepositoryException {
+        String action = file.exists() ? "U" : "A";
+        byte[] lineFeed = MimeTypes.isBinary(vaultFile.getContentType())
+                ? null
+                : LineOutputStream.LS_NATIVE;
+        VaultFileCopy.copy(vaultFile, file, lineFeed);
+        String fsPath = file.getAbsolutePath();
+        String jcrPath = vaultFile.getAggregatePath();
+        syncLog.log("%s file://%s", action, fsPath);
+        res.addEntry(jcrPath, fsPath, SyncResult.Operation.UPDATE_FS);
     }
 
     private void writeNtFile(SyncResult res, Entry e) throws RepositoryException, IOException {
