@@ -16,16 +16,9 @@
  */
 package org.apache.jackrabbit.vault.sync.impl;
 
-import java.io.File;
-import java.io.FileFilter;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.URISyntaxException;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.regex.Pattern;
 
 import javax.jcr.Node;
@@ -40,9 +33,12 @@ import org.apache.commons.jci.monitor.FilesystemAlterationObserverImpl;
 import org.apache.jackrabbit.util.Text;
 import org.apache.jackrabbit.vault.fs.Mounter;
 import org.apache.jackrabbit.vault.fs.api.*;
+import org.apache.jackrabbit.vault.fs.config.ConfigurationException;
 import org.apache.jackrabbit.vault.fs.config.DefaultWorkspaceFilter;
 import org.apache.jackrabbit.vault.fs.config.ExportRoot;
 import org.apache.jackrabbit.vault.fs.config.MetaInf;
+import org.apache.jackrabbit.vault.fs.io.FileArchive;
+import org.apache.jackrabbit.vault.fs.io.Importer;
 import org.apache.jackrabbit.vault.util.Constants;
 import org.apache.jackrabbit.vault.util.PathComparator;
 import org.apache.jackrabbit.vault.util.PlatformNameFormat;
@@ -88,15 +84,14 @@ public class SyncHandler implements FilesystemAlterationListener {
 
     // default to exclude all hidden files and directories
     private Pattern[] excluded = new Pattern[]{
-            Pattern.compile("\\..*")
+            Pattern.compile("\\.vlt"),
+            Pattern.compile("\\.vltignore"),
+            Pattern.compile("\\.vlt-.*")
     };
 
     private FileFilter fileFilter = new FileFilter() {
         public boolean accept(File file) {
             String name = file.getName();
-            if (file.isHidden()) {
-                return false;
-            }
             for (Pattern p:excluded) {
                 if (p.matcher(name).matches()) {
                     return false;
@@ -194,7 +189,7 @@ public class SyncHandler implements FilesystemAlterationListener {
         pendingFsChanges.clear();
     }
 
-    public void sync(Session session) throws RepositoryException, IOException {
+    public void sync(Session session) throws RepositoryException, IOException, ConfigurationException {
         updateConfig();
         updateFilter();
         updateFileSystem(session);
@@ -215,14 +210,7 @@ public class SyncHandler implements FilesystemAlterationListener {
         // check if full sync is requested
         SyncMode syncOnce = cfg.getSyncOnce();
         if (syncOnce != null) {
-            cfg.setSyncOnce(null);
-            try {
-                cfg.save();
-            } catch (IOException e) {
-                log.error("Error while saving config", e);
-            }
-            log.info("Sync Once requested: {}", syncOnce);
-            syncTree(session, syncOnce);
+            log.error("syncOnce not supported");
         } else {
             SyncResult res = syncToDisk(session);
             log.debug("Scanning filesystem for changes {}", this);
@@ -263,20 +251,6 @@ public class SyncHandler implements FilesystemAlterationListener {
         }
     }
 
-    private TreeSync createTreeSync(SyncMode mode) {
-        TreeSync sync = new TreeSync(syncLog, fileFilter, filter);
-        sync.setSyncMode(mode);
-        return sync;
-    }
-
-    private void syncTree(Session session, SyncMode direction) throws RepositoryException, IOException {
-        TreeSync tree = createTreeSync(direction);
-        tree.sync(session.getRootNode(), fileRoot);
-        // flush fs changes
-        observer.checkAndNotify();
-        pendingFsChanges.clear();
-    }
-
     private SyncResult syncToDisk(Session session) throws RepositoryException, IOException {
         SyncResult res = new SyncResult();
         for (String path: preparedJcrChanges) {
@@ -288,84 +262,70 @@ public class SyncHandler implements FilesystemAlterationListener {
                 log.debug("**** rejected. filter does not include {}", path);
                 continue;
             }
-            File file = getFileForJcrPath(path);
-            log.debug("**** about sync jcr:/{} -> file://{}", path, file.getAbsolutePath());
-            Node node;
-            Node parentNode;
-            if (session.nodeExists(path)) {
-                node = session.getNode(path);
+            log.debug("**** about sync jcr:/{} -> file://...", path);
 
-                VaultFile vaultFile;
-                do {
-                    vaultFile = fs.getFile(PlatformNameFormat.getPlatformPath(node.getPath()));
-                    if (vaultFile == null) {
-                        node = node.getParent();
+            String[] segs = Text.explode(path, '/');
+            VaultFile vaultFile = fs.getRoot();
+            VaultFile parentVaultFile = vaultFile;
+            File file = fileRoot;
+            File parentFile = file;
+
+            for (String seg : segs) {
+                String platformName = PlatformNameFormat.getPlatformName(seg);
+                VaultFile childVaultFile = vaultFile.getChild(platformName);
+                if (childVaultFile == null) {
+                    Aggregate aggregate = vaultFile.getAggregate();
+                    if (aggregate != null) {
+                        Node node = aggregate.getNode();
+                        Aggregator aggregator = fs.getAggregateManager().getAggregator(node, node.getPath());
+                        if (aggregator.includes(session.getRootNode(), node, "/" + seg)) {
+                            break;
+                        }
                     }
-                } while (vaultFile == null && node != null);
-
-                if (vaultFile != null) {
-                    TreeSync tree = createTreeSync(SyncMode.JCR2FS);
-                    res.merge(tree.syncVaultFile(fileRoot, vaultFile));
+                    for (VaultFile otherChildVaultFile : vaultFile.getChildren()) {
+                        if (seg.equals(Text.getName(otherChildVaultFile.getAggregatePath()))) {
+                            childVaultFile = otherChildVaultFile;
+                            break;
+                        }
+                    }
                 }
+                parentVaultFile = vaultFile;
+                parentFile = file;
+                vaultFile = childVaultFile;
+                file = new File(file, platformName);
+                if (vaultFile == null) {
+                    break;
+                }
+            }
+
+            TreeSync sync = new TreeSync(syncLog);
+            if (vaultFile != null) {
+                sync.syncVaultFile(res, parentFile, vaultFile);
             } else {
-                String parentPath = Text.getRelativeParent(path, 1);
-                parentNode = session.nodeExists(parentPath)
-                        ? session.getNode(parentPath)
-                        : null;
-                TreeSync tree = createTreeSync(SyncMode.JCR2FS);
-                res.merge(tree.syncSingle(parentNode, null, file, recursive));
+                sync.syncChildVaultFile(res, parentFile, parentVaultFile, file);
             }
         }
         return res;
     }
 
-    private void syncToJcr(Session session, SyncResult res) throws RepositoryException, IOException {
-        for (String filePath: pendingFsChanges.keySet()) {
-            if (res.getByFsPath(filePath) != null) {
-                log.debug("ignoring change triggered by previous JCR->FS update. {}", filePath);
-                return;
-            }
-            File file = pendingFsChanges.get(filePath);
-            String path = getJcrPathForFile(file);
-            log.debug("**** about sync file:/{} -> jcr://{}", file.getAbsolutePath(), path);
-            if (!contains(path)) {
-                log.debug("**** rejected. filter does not include {}", path);
-                continue;
-            }
-            Node node;
-            Node parentNode;
-            if (session.nodeExists(path)) {
-                node = session.getNode(path);
-                parentNode = node.getParent();
-            } else {
-                node = null;
-                String parentPath = Text.getRelativeParent(path, 1);
-                parentNode = session.nodeExists(parentPath)
-                        ? session.getNode(parentPath)
-                        : null;
-            }
-            TreeSync tree = createTreeSync(SyncMode.FS2JCR);
-            tree.setSyncMode(SyncMode.FS2JCR);
-            res.merge(tree.syncSingle(parentNode, node, file, false));
+    private void syncToJcr(Session session, SyncResult res) throws RepositoryException, IOException, ConfigurationException {
+        for (String fsPath : res.getFsPaths()) {
+            pendingFsChanges.remove(fsPath);
         }
+        if (pendingFsChanges.isEmpty()) {
+            return;
+        }
+        Importer importer = new Importer();
+        FileArchive archive = new FileArchive(getArchiveRoot());
+        archive.open(false);
+        importer.run(archive, session.getRootNode());
     }
 
-    public File getFileForJcrPath(String path) {
-        String[] segs = Text.explode(path, '/');
-        File file = fileRoot;
-        for (String seg : segs) {
-            file = new File(file, PlatformNameFormat.getPlatformName(seg));
+    private File getArchiveRoot() {
+        if (fileRoot.getName().equals(Constants.ROOT_DIR)) {
+            return fileRoot.getParentFile();
         }
-        return file;
-    }
-
-    public String getJcrPathForFile(File file) {
-        StringBuilder s = new StringBuilder();
-        while (!file.equals(fileRoot)) {
-            s.insert(0, PlatformNameFormat.getRepositoryName(file.getName())).insert(0, '/');
-            file = file.getParentFile();
-        }
-        return s.toString();
+        return fileRoot;
     }
 
     private void onChange(File file, String type) {
