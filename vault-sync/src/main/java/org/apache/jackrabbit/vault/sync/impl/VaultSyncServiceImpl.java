@@ -40,6 +40,7 @@ import org.apache.felix.scr.annotations.Deactivate;
 import org.apache.felix.scr.annotations.Property;
 import org.apache.felix.scr.annotations.Reference;
 import org.apache.jackrabbit.util.Text;
+import org.apache.jackrabbit.vault.fs.config.ConfigurationException;
 import org.apache.sling.commons.osgi.OsgiUtil;
 import org.apache.sling.jcr.api.SlingRepository;
 import org.slf4j.Logger;
@@ -155,9 +156,7 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
                     for (SyncHandler spec : specs) {
                         try {
                             spec.sync(session);
-                        } catch (RepositoryException e) {
-                            log.warn("Error during sync", e);
-                        } catch (IOException e) {
+                        } catch (RepositoryException | ConfigurationException | IOException e) {
                             log.warn("Error during sync", e);
                         }
                     }
@@ -170,6 +169,9 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
                     log.warn("interrupted while waiting.");
                 }
             }
+        } catch(Throwable e) {
+            log.error("SYNC ERROR", e);
+            throw e;
         } finally {
             waitLock.unlock();
         }
