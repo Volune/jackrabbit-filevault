@@ -574,11 +574,11 @@ public class AggregateImpl implements Aggregate {
 
     private boolean includesProperty(String propertyPath) {
         for (PathFilterSet filterSet: mgr.getWorkspaceFilter().getPropertyFilterSets()) {
-            if (!filterSet.contains(propertyPath)) {
-                return false;
+            if (filterSet.contains(propertyPath)) {
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     private void addNamespace(Set<String> prefixes, String name) throws RepositoryException {
