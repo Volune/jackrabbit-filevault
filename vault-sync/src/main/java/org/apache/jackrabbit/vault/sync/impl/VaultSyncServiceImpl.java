@@ -106,7 +106,7 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
             // set up observation listener
             session.getWorkspace().getObservationManager().addEventListener(
                     this,
-                    Event.NODE_ADDED | Event.NODE_REMOVED | Event.PROPERTY_CHANGED | Event.PROPERTY_ADDED | Event.PROPERTY_REMOVED,
+                    Event.NODE_ADDED | Event.NODE_REMOVED | Event.PROPERTY_CHANGED | Event.PROPERTY_ADDED | Event.PROPERTY_REMOVED | Event.NODE_MOVED,
                     "/",
                     true /* isDeep */,
                     null /* uuid */,
