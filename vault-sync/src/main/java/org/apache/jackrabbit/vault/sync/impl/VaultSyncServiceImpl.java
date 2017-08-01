@@ -19,6 +19,7 @@ package org.apache.jackrabbit.vault.sync.impl;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -179,7 +180,7 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
 
     public void onEvent(EventIterator events) {
         try {
-            Set<String> modified = new HashSet<String>();
+            Set<String> modified = new LinkedHashSet<String>(); // preserve insertion order
             Set<String> deleted = new HashSet<String>();
             while (events.hasNext()) {
                 Event evt = events.nextEvent();
