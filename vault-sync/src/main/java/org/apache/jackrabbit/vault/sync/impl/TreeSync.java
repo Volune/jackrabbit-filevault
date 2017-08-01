@@ -63,6 +63,12 @@ public class TreeSync {
     }
 
     public void syncVaultFile(SyncResult res, File parentFile, VaultFile vaultFile) throws RepositoryException, IOException {
+        if (!parentFile.exists()) {
+            VaultFile parentVaultFile = vaultFile.getParent();
+            if (parentVaultFile != null) {
+                syncVaultFile(res, parentFile.getParentFile(), parentVaultFile);
+            }
+        }
         for (VaultFile related : vaultFile.getRelated()) {
             if (related.isDirectory()) {
                 createDirectory(res, getChildFile(parentFile, related.getArtifact().getPlatformPath()), related);
