@@ -61,7 +61,7 @@ public class SyncHandler implements FilesystemAlterationListener {
 
     private final FilesystemAlterationObserverImpl observer;
 
-    private final Set<String> pendingJcrChanges = new HashSet<String>();
+    private final Set<String> pendingJcrChanges = new LinkedHashSet<String>();
 
     private final Map<String, File> pendingFsChanges = new TreeMap<String, File>(new PathComparator(Constants.FS_NATIVE.charAt(0)));
 
