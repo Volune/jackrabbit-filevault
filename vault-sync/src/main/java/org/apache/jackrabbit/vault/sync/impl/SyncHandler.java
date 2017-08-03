@@ -300,7 +300,7 @@ public class SyncHandler implements FilesystemAlterationListener {
 
             TreeSync sync = new TreeSync(syncLog);
             if (vaultFile != null) {
-                sync.syncVaultFile(res, parentFile, vaultFile);
+                sync.syncVaultFile(res, parentFile, vaultFile, recursive);
             } else {
                 sync.syncChildVaultFile(res, parentFile, parentVaultFile, file);
             }

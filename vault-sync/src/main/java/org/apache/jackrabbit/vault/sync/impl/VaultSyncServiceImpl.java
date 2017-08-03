@@ -169,6 +169,15 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
                 } catch (InterruptedException e) {
                     log.warn("interrupted while waiting.");
                 }
+                try {
+                    if (session.hasPendingChanges()) {
+                        log.warn("Sync session has pending changes");
+                    } else {
+                        session.refresh(false);
+                    }
+                } catch (RepositoryException e) {
+                    log.warn("Error during sync session refresh", e);
+                }
             }
         } catch(Throwable e) {
             log.error("SYNC ERROR", e);
@@ -204,6 +213,8 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
                     } else {
                         modified.add(path);
                     }
+                } else if (evt.getType() == Event.NODE_MOVED) {
+                    modified.add(path + "/");
                 } else {
                     modified.add(path);
                 }

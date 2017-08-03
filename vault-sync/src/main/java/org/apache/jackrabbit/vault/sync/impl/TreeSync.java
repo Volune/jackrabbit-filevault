@@ -17,29 +17,14 @@
 package org.apache.jackrabbit.vault.sync.impl;
 
 import java.io.File;
-import java.io.FileFilter;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.Calendar;
-import java.util.HashMap;
-import java.util.Map;
 
-import javax.jcr.Binary;
-import javax.jcr.Node;
-import javax.jcr.NodeIterator;
-import javax.jcr.Property;
 import javax.jcr.RepositoryException;
-import javax.jcr.nodetype.NodeType;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.jackrabbit.util.Text;
 import org.apache.jackrabbit.vault.fs.VaultFileCopy;
-import org.apache.jackrabbit.vault.fs.api.SerializationType;
 import org.apache.jackrabbit.vault.fs.api.VaultFile;
-import org.apache.jackrabbit.vault.fs.api.WorkspaceFilter;
-import org.apache.jackrabbit.vault.util.FileInputSource;
 import org.apache.jackrabbit.vault.util.LineOutputStream;
 import org.apache.jackrabbit.vault.util.MimeTypes;
 import org.apache.jackrabbit.vault.util.PlatformNameFormat;
@@ -62,25 +47,34 @@ public class TreeSync {
         this.syncLog = syncLog;
     }
 
-    public void syncVaultFile(SyncResult res, File parentFile, VaultFile vaultFile) throws RepositoryException, IOException {
+    public void syncVaultFile(SyncResult res, File parentFile, VaultFile vaultFile, boolean recursive) throws RepositoryException, IOException {
         if (!parentFile.exists()) {
             VaultFile parentVaultFile = vaultFile.getParent();
             if (parentVaultFile != null) {
-                syncVaultFile(res, parentFile.getParentFile(), parentVaultFile);
+                syncVaultFile(res, parentFile.getParentFile(), parentVaultFile, false);
             }
         }
         for (VaultFile related : vaultFile.getRelated()) {
+            File relatedFile = getChildFile(parentFile, related.getArtifact().getPlatformPath());
             if (related.isDirectory()) {
-                createDirectory(res, getChildFile(parentFile, related.getArtifact().getPlatformPath()), related);
+                createDirectory(res, relatedFile, related);
+                if (recursive) {
+                    for (VaultFile childVaultFile : related.getChildren()) {
+                        if (vaultFile.getControllingAggregate().equals(childVaultFile.getControllingAggregate())) {
+                            continue;
+                        }
+                        syncVaultFile(res, relatedFile, childVaultFile, true);
+                    }
+                }
             } else {
-                writeFile(res, getChildFile(parentFile, related.getArtifact().getPlatformPath()), related);
+                writeFile(res, relatedFile, related);
             }
         }
     }
 
     public void syncChildVaultFile(SyncResult res, File parentFile, VaultFile parentVaultFile, File deletedFile) throws RepositoryException, IOException {
         deleteFile(res, parentVaultFile, deletedFile);
-        syncVaultFile(res, parentFile.getParentFile(), parentVaultFile);
+        syncVaultFile(res, parentFile.getParentFile(), parentVaultFile, false);
     }
 
     private File getChildFile(File parentFile, String name) {
