@@ -18,16 +18,17 @@ package org.apache.jackrabbit.vault.sync.impl;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Collection;
 
 import javax.jcr.RepositoryException;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.jackrabbit.util.Text;
 import org.apache.jackrabbit.vault.fs.VaultFileCopy;
+import org.apache.jackrabbit.vault.fs.api.Artifact;
 import org.apache.jackrabbit.vault.fs.api.VaultFile;
 import org.apache.jackrabbit.vault.util.LineOutputStream;
 import org.apache.jackrabbit.vault.util.MimeTypes;
-import org.apache.jackrabbit.vault.util.PlatformNameFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,21 +55,35 @@ public class TreeSync {
                 syncVaultFile(res, parentFile.getParentFile(), parentVaultFile, false);
             }
         }
-        for (VaultFile related : vaultFile.getRelated()) {
-            File relatedFile = getChildFile(parentFile, related.getArtifact().getPlatformPath());
-            if (related.isDirectory()) {
-                createDirectory(res, relatedFile, related);
-                if (recursive) {
-                    for (VaultFile childVaultFile : related.getChildren()) {
-                        if (vaultFile.getControllingAggregate().equals(childVaultFile.getControllingAggregate())) {
-                            continue;
-                        }
-                        syncVaultFile(res, relatedFile, childVaultFile, true);
-                    }
-                }
-            } else {
-                writeFile(res, relatedFile, related);
+        Collection<? extends VaultFile> relatedFiles = vaultFile.getRelated();
+        if (relatedFiles != null) {
+            for (VaultFile related : relatedFiles) {
+                syncOneVaultFile(res, parentFile, related, recursive);
             }
+        } else {
+            syncOneVaultFile(res, parentFile, vaultFile, recursive);
+        }
+    }
+
+    private void syncOneVaultFile(SyncResult res, File parentFile, VaultFile vaultFile, boolean recursive) throws RepositoryException, IOException {
+        Artifact artifact = vaultFile.getArtifact();
+        // somehow if no artifact, getName() returns the platform name
+        String platformPath = artifact != null ? artifact.getPlatformPath() : vaultFile.getName();
+        File file = getChildFile(parentFile, platformPath);
+        if (vaultFile.isDirectory()) {
+            createDirectory(res, file, vaultFile);
+            if (recursive) {
+                Collection<? extends VaultFile> relatedFiles = vaultFile.getRelated();
+                for (VaultFile childVaultFile : vaultFile.getChildren()) {
+                    if (relatedFiles != null && relatedFiles.contains(childVaultFile)) {
+                        // already handled
+                        continue;
+                    }
+                    syncVaultFile(res, file, childVaultFile, true);
+                }
+            }
+        } else {
+            writeFile(res, file, vaultFile);
         }
     }
 
