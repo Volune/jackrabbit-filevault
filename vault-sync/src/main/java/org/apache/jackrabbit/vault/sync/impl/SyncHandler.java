@@ -186,7 +186,6 @@ public class SyncHandler implements FilesystemAlterationListener {
         // assert locked
         preparedJcrChanges = pendingJcrChanges.toArray(new String[pendingJcrChanges.size()]);
         pendingJcrChanges.clear();
-        pendingFsChanges.clear();
     }
 
     public void sync(Session session) throws RepositoryException, IOException, ConfigurationException {
@@ -216,8 +215,6 @@ public class SyncHandler implements FilesystemAlterationListener {
             log.debug("Scanning filesystem for changes {}", this);
             observer.checkAndNotify();
             syncToJcr(session, res);
-            // todo: maybe save after each import?
-            session.save();
             res.dump();
         }
         log.debug("Sync cycle completed for {}", this);
@@ -319,6 +316,8 @@ public class SyncHandler implements FilesystemAlterationListener {
         FileArchive archive = new FileArchive(getArchiveRoot());
         archive.open(false);
         importer.run(archive, session.getRootNode());
+        session.save();
+        pendingFsChanges.clear();
     }
 
     private File getArchiveRoot() {
