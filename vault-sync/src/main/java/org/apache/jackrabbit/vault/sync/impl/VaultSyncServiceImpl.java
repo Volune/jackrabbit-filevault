@@ -171,10 +171,9 @@ public class VaultSyncServiceImpl implements EventListener, Runnable {
                 }
                 try {
                     if (session.hasPendingChanges()) {
-                        log.warn("Sync session has pending changes");
-                    } else {
-                        session.refresh(false);
+                        log.warn("Sync session has pending changes, discarding");
                     }
+                    session.refresh(false);
                 } catch (RepositoryException e) {
                     log.warn("Error during sync session refresh", e);
                 }
